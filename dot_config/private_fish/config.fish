@@ -10,4 +10,7 @@ if status is-interactive
 
     # vi key bindings
     fish_vi_key_bindings
+
+    # EDITORの設定
+    set -gx EDITOR "nvim"
 end
