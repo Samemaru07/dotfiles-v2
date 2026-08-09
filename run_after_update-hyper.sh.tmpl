@@ -1,0 +1,4 @@
+#!/bin/bash
+{{ if (.chezmoi.kernel.osrelease | lower | contains "microsoft") }}
+cp {{ .chezmoi.homeDir }}/.hyper.js /mnt/c/Users/nakayama/AppData/Roaming/hyper/.hyper.js
+{{ end }}
