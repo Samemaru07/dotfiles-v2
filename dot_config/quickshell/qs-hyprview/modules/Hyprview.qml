@@ -1,0 +1,453 @@
+import "."
+import "../layouts"
+import Qt5Compat.GraphicalEffects
+import QtQuick
+import QtQuick.Effects
+import Quickshell
+import Quickshell.Hyprland
+import Quickshell.Io
+import Quickshell.Wayland
+import Quickshell.Widgets
+
+PanelWindow {
+    id: root
+
+    // --- SETTINGS ---
+    property string layoutAlgorithm: ""
+    property string lastLayoutAlgorithm: ""
+    property bool liveCapture: false
+    property bool moveCursorToActiveWindow: false
+    // --- INTERNAL STATE ---
+    property bool isActive: false
+    property bool specialActive: false
+    property bool animateWindows: false
+    property var lastPositions: {
+    }
+
+    function toggleExpose() {
+        root.isActive = !root.isActive;
+        if (root.isActive) {
+            if (root.layoutAlgorithm === 'random') {
+                var layouts = ['smartgrid', 'justified', 'bands', 'masonry', 'hero', 'spiral', 'satellite', 'staggered', 'columnar', 'vortex'].filter((l) => {
+                    return l !== root.lastLayoutAlgorithm;
+                });
+                var randomLayout = layouts[Math.floor(Math.random() * layouts.length)];
+                root.lastLayoutAlgorithm = randomLayout;
+            } else {
+                root.lastLayoutAlgorithm = root.layoutAlgorithm;
+            }
+            exposeArea.pendingFocusAddress = Hyprland.activeToplevel ? String(Hyprland.activeToplevel.address) : "";
+            exposeArea.currentIndex = -1;
+            searchBox.reset();
+            Hyprland.refreshToplevels();
+            refreshThumbs();
+        } else {
+            root.animateWindows = false;
+            root.lastPositions = {
+            };
+        }
+    }
+
+    function refreshThumbs() {
+        if (!root.isActive)
+            return ;
+
+        for (var i = 0; i < winRepeater.count; ++i) {
+            var it = winRepeater.itemAt(i);
+            if (it && it.visible && it.refreshThumb)
+                it.refreshThumb();
+
+        }
+    }
+
+    implicitWidth: 1200
+    implicitHeight: 800
+    color: "transparent"
+    visible: isActive
+    // LayerShell Configs
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.exclusiveZone: -1
+    WlrLayershell.keyboardFocus: isActive ? 1 : 0
+    WlrLayershell.namespace: "quickshell:expose"
+
+    anchors {
+        top: false
+        bottom: false
+        left: false
+        right: false
+    }
+
+    Image {
+        id: bgImage
+
+        anchors.fill: parent
+        source: "../assets/misato.jpg"
+        fillMode: Image.PreserveAspectCrop
+        opacity: 0.9
+        layer.enabled: true
+
+        layer.effect: OpacityMask {
+
+            maskSource: Rectangle {
+                width: bgImage.width
+                height: bgImage.height
+                radius: 24
+                visible: false
+            }
+
+        }
+
+    }
+
+    // --- IPC & EVENTS ---
+    IpcHandler {
+        function toggle(layout: string) {
+            root.layoutAlgorithm = layout;
+            root.toggleExpose();
+        }
+
+        function open(layout: string) {
+            root.layoutAlgorithm = layout;
+            if (root.isActive)
+                return ;
+
+            root.toggleExpose();
+        }
+
+        function close() {
+            if (!root.isActive)
+                return ;
+
+            root.toggleExpose();
+        }
+
+        target: "expose"
+    }
+
+    Connections {
+        function onRawEvent(ev) {
+            if (!root.isActive && ev.name !== "activespecial")
+                return ;
+
+            switch (ev.name) {
+            case "openwindow":
+            case "closewindow":
+            case "changefloatingmode":
+            case "movewindow":
+                Hyprland.refreshToplevels();
+                refreshThumbs();
+                return ;
+            case "activespecial":
+                var dataStr = String(ev.data);
+                var namePart = dataStr.split(",")[0];
+                root.specialActive = (namePart.length > 0);
+                return ;
+            default:
+                return ;
+            }
+        }
+
+        target: Hyprland
+    }
+
+    // Update thumbs every 125ms if liveCapture = false
+    Timer {
+        id: screencopyTimer
+
+        interval: 125
+        repeat: true
+        running: !root.liveCapture && root.isActive
+        onTriggered: root.refreshThumbs()
+    }
+
+    // --- USER INTERFACE ---
+    FocusScope {
+        id: mainScope
+
+        // Helper for horizontal navigation
+        function moveSelectionHorizontal(delta) {
+            var total = winRepeater.count;
+            var start = exposeArea.currentIndex;
+            for (var step = 1; step <= total; ++step) {
+                var candidate = (start + delta * step + total) % total;
+                var it = winRepeater.itemAt(candidate);
+                if (it && it.visible) {
+                    exposeArea.currentIndex = candidate;
+                    return ;
+                }
+            }
+        }
+
+        function moveSelectionVertical(dir) {
+            var total = winRepeater.count;
+            var startIndex = exposeArea.currentIndex;
+            var currentItem = winRepeater.itemAt(startIndex);
+            if (!currentItem || !currentItem.visible) {
+                moveSelectionHorizontal(dir > 0 ? 1 : -1);
+                return ;
+            }
+            var curCx = currentItem.x + currentItem.width / 2;
+            var curCy = currentItem.y + currentItem.height / 2;
+            var bestIndex = -1;
+            var bestDy = 1e+08;
+            var bestDx = 1e+08;
+            for (var i = 0; i < total; ++i) {
+                var it = winRepeater.itemAt(i);
+                if (!it || !it.visible || i === startIndex)
+                    continue;
+
+                var cx = it.x + it.width / 2;
+                var cy = it.y + it.height / 2;
+                var dy = cy - curCy;
+                // Direction filtering
+                if (dir > 0 && dy <= 0)
+                    continue;
+
+                if (dir < 0 && dy >= 0)
+                    continue;
+
+                var absDy = Math.abs(dy);
+                var absDx = Math.abs(cx - curCx);
+                // Search for nearest thumb (first in vertical, then horizontal distance)
+                if (absDy < bestDy || (absDy === bestDy && absDx < bestDx)) {
+                    bestDy = absDy;
+                    bestDx = absDx;
+                    bestIndex = i;
+                }
+            }
+            if (bestIndex >= 0)
+                exposeArea.currentIndex = bestIndex;
+
+        }
+
+        anchors.fill: parent
+        focus: true
+        Keys.onPressed: (event) => {
+            if (!root.isActive)
+                return ;
+
+            if (event.key === Qt.Key_Escape) {
+                root.toggleExpose();
+                event.accepted = true;
+                return ;
+            }
+            const total = winRepeater.count;
+            if (total <= 0)
+                return ;
+
+            if (event.key === Qt.Key_Right || event.key === Qt.Key_Tab) {
+                moveSelectionHorizontal(1);
+                event.accepted = true;
+            } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Backtab) {
+                moveSelectionHorizontal(-1);
+                event.accepted = true;
+            } else if (event.key === Qt.Key_Down) {
+                moveSelectionVertical(1);
+                event.accepted = true;
+            } else if (event.key === Qt.Key_Up) {
+                moveSelectionVertical(-1);
+                event.accepted = true;
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                var item = winRepeater.itemAt(exposeArea.currentIndex);
+                if (item && item.activateWindow) {
+                    item.activateWindow();
+                    event.accepted = true;
+                }
+            }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: false
+            z: -1
+            onClicked: root.toggleExpose()
+        }
+
+        Item {
+            id: layoutContainer
+
+            anchors.fill: parent
+            anchors.margins: 32
+
+            Column {
+                id: layoutRoot
+
+                anchors.fill: parent
+                anchors.margins: 48
+                spacing: 20
+
+                // thumbs area
+                Item {
+                    id: exposeArea
+
+                    property int currentIndex: 0
+                    property string searchText: ""
+                    property string pendingFocusAddress: ""
+
+                    width: layoutRoot.width
+                    height: layoutRoot.height - searchBox.implicitHeight - layoutRoot.spacing
+                    // Reset active thumb on searchText change
+                    onSearchTextChanged: {
+                        currentIndex = (windowLayoutModel.count > 0) ? 0 : -1;
+                    }
+
+                    ScriptModel {
+                        id: windowLayoutModel
+
+                        property int areaW: exposeArea.width
+                        property int areaH: exposeArea.height
+                        property string query: exposeArea.searchText
+                        property string algo: root.lastLayoutAlgorithm
+                        property var rawToplevels: Hyprland.toplevels.values
+
+                        values: {
+                            // Bailout on wrong screen size
+                            if (areaW <= 0 || areaH <= 0)
+                                return [];
+
+                            var q = (query || "").toLowerCase();
+                            var windowList = [];
+                            var idx = 0;
+                            if (!rawToplevels)
+                                return [];
+
+                            for (var it of rawToplevels) {
+                                var w = it;
+                                var clientInfo = w && w.lastIpcObject ? w.lastIpcObject : {
+                                };
+                                var workspace = clientInfo && clientInfo.workspace ? clientInfo.workspace : null;
+                                var workspaceId = workspace && workspace.id !== undefined ? workspace.id : undefined;
+                                // Filter invalid workspace or offscreen windows
+                                if (workspaceId === undefined || workspaceId === null)
+                                    continue;
+
+                                if (workspaceId === 1)
+                                    continue;
+
+                                var size = clientInfo && clientInfo.size ? clientInfo.size : [0, 0];
+                                var at = clientInfo && clientInfo.at ? clientInfo.at : [-1000, -1000];
+                                if (at[1] + size[1] <= 0)
+                                    continue;
+
+                                // Text filtering
+                                var title = (w.title || clientInfo.title || "").toLowerCase();
+                                var clazz = (clientInfo["class"] || "").toLowerCase();
+                                var ic = (clientInfo.initialClass || "").toLowerCase();
+                                var app = (w.appId || clientInfo.initialClass || "").toLowerCase();
+                                if (q.length > 0) {
+                                    var match = title.indexOf(q) !== -1 || clazz.indexOf(q) !== -1 || ic.indexOf(q) !== -1 || app.indexOf(q) !== -1;
+                                    if (!match)
+                                        continue;
+
+                                }
+                                windowList.push({
+                                    "win": w,
+                                    "clientInfo": clientInfo,
+                                    "workspaceId": workspaceId,
+                                    "width": size[0],
+                                    "height": size[1],
+                                    "originalIndex": idx++,
+                                    "lastIpcObject": w.lastIpcObject
+                                });
+                            }
+                            // Sort by workspaceId, then originalIndex
+                            windowList.sort(function(a, b) {
+                                if (a.workspaceId < b.workspaceId)
+                                    return -1;
+
+                                if (a.workspaceId > b.workspaceId)
+                                    return 1;
+
+                                if (a.originalIndex < b.originalIndex)
+                                    return -1;
+
+                                if (a.originalIndex > b.originalIndex)
+                                    return 1;
+
+                                return 0;
+                            });
+                            if (algo === "masonry")
+                                return MasonryLayout.doLayout(windowList, areaW, areaH);
+
+                            return ColumnarLayout.doLayout(windowList, areaW, areaH);
+                        }
+                        onValuesChanged: {
+                            if (!root.isActive)
+                                return ;
+
+                            var addr = exposeArea.pendingFocusAddress;
+                            if (addr !== "") {
+                                for (var i = 0; i < winRepeater.count; ++i) {
+                                    var it = winRepeater.itemAt(i);
+                                    if (it && it.winKey === addr) {
+                                        exposeArea.currentIndex = i;
+                                        exposeArea.pendingFocusAddress = "";
+                                        return ;
+                                    }
+                                }
+                            }
+                            // フォールバック: 一番左（index: 0）
+                            exposeArea.currentIndex = (windowLayoutModel.count > 0) ? 0 : -1;
+                            exposeArea.pendingFocusAddress = "";
+                        }
+                    }
+
+                    Repeater {
+                        id: winRepeater
+
+                        model: windowLayoutModel
+
+                        delegate: WindowThumbnail {
+                            visible: modelData !== null && modelData !== undefined && !modelData.isDivider
+                            hWin: modelData && !modelData.isDivider ? modelData.win : null
+                            wHandle: hWin ? hWin.wayland : null
+                            winKey: hWin ? String(hWin.address) : ""
+                            thumbW: modelData && !modelData.isDivider ? modelData.width : 0
+                            thumbH: modelData && !modelData.isDivider ? modelData.height : 0
+                            clientInfo: hWin ? hWin.lastIpcObject : {
+                            }
+                            workspaceId: modelData ? (modelData.workspaceId ?? 0) : 0
+                            targetX: modelData ? modelData.x : 0
+                            targetY: modelData ? modelData.y : 0
+                            targetZ: (modelData && !modelData.isDivider && visible && (exposeArea.currentIndex === index)) ? 1000 : (modelData && modelData.zIndex !== undefined ? modelData.zIndex : 0)
+                            targetRotation: modelData && modelData.rotation ? modelData.rotation : 0
+                            hovered: modelData !== null && modelData !== undefined && !modelData.isDivider && visible && (exposeArea.currentIndex === index)
+                            moveCursorToActiveWindow: root.moveCursorToActiveWindow
+                        }
+
+                    }
+
+                    Repeater {
+                        model: windowLayoutModel
+
+                        delegate: Rectangle {
+                            visible: modelData !== null && modelData !== undefined && modelData.isDivider === true
+                            x: modelData ? modelData.x : 0
+                            y: modelData ? modelData.y : 0
+                            width: 2
+                            height: modelData ? modelData.height : 0
+                            color: "#44ffffff"
+                            radius: 1
+                        }
+
+                    }
+
+                }
+
+                SearchBox {
+                    id: searchBox
+
+                    visible: false
+                    onTextChanged: function(text) {
+                        root.animateWindows = true;
+                        exposeArea.searchText = text;
+                    }
+                }
+
+            }
+
+        }
+
+    }
+
+}
