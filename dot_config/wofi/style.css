@@ -1,0 +1,53 @@
+window {
+  border-radius: 10px;
+  background-image:
+    linear-gradient(to right, rgba(0, 0, 0, 0.7) 38%, rgba(0, 0, 0, 0.1) 100%),
+    url("/home/samemaru/.config/wofi/sakura.jpg");
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-position: top;
+  background-color: rgba(0, 0, 0, 0.5);
+  color: white;
+  border: solid 6px rgba(190, 145, 60, 0.45);
+}
+
+#input {
+  color: #f0ddb8;
+  margin: 14px 10px 6px 10px;
+  padding: 8px;
+  border-radius: 8px;
+  background-color: rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(190, 145, 60, 0.4);
+}
+
+#input image {
+  color: #f0ddb8;
+}
+
+#input placeholder {
+  color: rgba(220, 175, 80, 0.85);
+  font-size: 17px;
+  letter-spacing: 5px;
+}
+
+#entry {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+#entry:selected {
+  background-color: rgba(160, 100, 25, 0.5);
+  border-bottom: 1px solid rgba(190, 145, 60, 0.4);
+  border-left: 3px solid rgba(190, 145, 60, 0.8);
+}
+
+#scroll {
+  margin-right: 500px;
+  margin-left: 10px;
+  font-size: 15px;
+  background-color: rgba(0, 0, 0, 0.2);
+  border-radius: 10px;
+}
+
+#text {
+  padding: 6px 6px 6px 10px;
+}

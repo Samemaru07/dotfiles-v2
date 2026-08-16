@@ -1,0 +1,8 @@
+width=1000
+height=300
+lines=10
+show=drun
+prompt=✦  Wofi  ✦
+location=center
+allow_markup=true
+term=wezterm
